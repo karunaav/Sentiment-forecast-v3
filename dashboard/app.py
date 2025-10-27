@@ -1,32 +1,57 @@
 import os
+import time
+import requests
 import dash
 from dash import html, dcc, Input, Output, State
 import plotly.graph_objects as go
 import yfinance as yf
-import requests
 
-# ===============================
+# ======================================================
 # ✅ CONFIGURATION
-# ===============================
+# ======================================================
 APP_TITLE = os.getenv("APP_TITLE", "Sentiment Forecasting Dashboard")
 
-# ✅ Fix: guarantee a valid API URL
 API_BASE = os.getenv("API_BASE", "https://sentiment-forecast-v3.onrender.com").strip()
 if not API_BASE.startswith("http"):
     API_BASE = "https://sentiment-forecast-v3.onrender.com"
 
 FAANG = ["AAPL", "AMZN", "META", "GOOGL", "NFLX"]
 
-# ===============================
+# ======================================================
+# ✅ HELPER: Safe API call with retries
+# ======================================================
+def safe_get(url, retries=3, delay=5, timeout=60):
+    """Try API up to N times with exponential delay."""
+    for attempt in range(1, retries + 1):
+        try:
+            resp = requests.get(url, timeout=timeout)
+            if resp.status_code == 200:
+                return resp
+        except requests.exceptions.RequestException as e:
+            if attempt < retries:
+                time.sleep(delay)
+            else:
+                raise Exception(f"API not responding after {retries} tries ({e})")
+    return None
+
+
+# ======================================================
 # ✅ DASH SETUP
-# ===============================
+# ======================================================
 app = dash.Dash(__name__, requests_pathname_prefix="/dashboard/", title=APP_TITLE)
 server = app.server
 
 app.layout = html.Div(
     className="glass-container",
     children=[
-        html.H1(APP_TITLE, className="title"),
+        html.Div(
+            className="header",
+            children=[
+                html.H1(APP_TITLE, className="title"),
+                html.Div(id="api-status", className="status-badge"),
+            ],
+            style={"display": "flex", "justifyContent": "space-between", "alignItems": "center"},
+        ),
         html.Div(
             className="controls",
             children=[
@@ -53,13 +78,28 @@ app.layout = html.Div(
             className="tabs",
         ),
         html.Div(id="tab-content"),
+        dcc.Interval(id="ping-api", interval=60 * 1000, n_intervals=0),  # ping API every 60s
     ],
 )
 
+# ======================================================
+# ✅ CALLBACK: API Status Badge
+# ======================================================
+@app.callback(Output("api-status", "children"), Input("ping-api", "n_intervals"))
+def update_status(_):
+    try:
+        r = requests.get(f"{API_BASE}/health", timeout=10)
+        if r.status_code == 200:
+            return html.Span("🟢 API Connected", style={"color": "#00e676", "fontWeight": "bold"})
+        else:
+            return html.Span("🟠 API Slow", style={"color": "#ffb74d", "fontWeight": "bold"})
+    except Exception:
+        return html.Span("🔴 API Offline", style={"color": "#ef5350", "fontWeight": "bold"})
 
-# ===============================
-# ✅ CALLBACKS
-# ===============================
+
+# ======================================================
+# ✅ CALLBACK: Tab content logic
+# ======================================================
 @app.callback(
     Output("tab-content", "children"),
     Input("tabs", "value"),
@@ -67,25 +107,28 @@ app.layout = html.Div(
     State("ticker-dropdown", "value"),
 )
 def update_tabs(tab, n_clicks, ticker):
-    # --- Fetch prediction
+    if not ticker:
+        return html.Div("⚠️ Please select a ticker symbol.")
+
+    # --- Fetch prediction with retry
     try:
-        resp = requests.get(f"{API_BASE}/predict/{ticker}", timeout=20)
-        pred = resp.json()
+        pred = safe_get(f"{API_BASE}/predict/{ticker}").json()
     except Exception as e:
         return html.Div(f"⚠️ Error fetching prediction: {e}")
 
-    # --- Fetch backtest
+    # --- Fetch backtest with retry
     try:
-        back = requests.get(f"{API_BASE}/backtest/{ticker}", timeout=20).json()
+        back = safe_get(f"{API_BASE}/backtest/{ticker}").json()
     except Exception:
         back = {}
 
-    # --- Tabs
+    # -------------------- Prediction Tab --------------------
     if tab == "tab-pred":
         try:
             df = yf.download(ticker, period="6mo", progress=False)
         except Exception:
             df = None
+
         fig = go.Figure()
         if df is not None and not df.empty:
             fig.add_trace(
@@ -103,39 +146,44 @@ def update_tabs(tab, n_clicks, ticker):
             title=f"{ticker} — Last 6 Months",
             margin=dict(l=40, r=40, t=60, b=40),
         )
+
+        pred_val = pred.get("predicted_return", 0)
+        conf = pred.get("confidence", 0)
         return html.Div(
             [
                 html.H4(
-                    f"{ticker}: Predicted next-day return = {pred.get('predicted_return', 0):.4%}"
+                    f"{ticker}: Predicted next-day return = {pred_val:.4%} | Confidence = {conf:.2f}"
                 ),
                 dcc.Graph(figure=fig),
             ]
         )
 
-    if tab == "tab-back":
+    # -------------------- Backtesting Tab --------------------
+    elif tab == "tab-back":
         if "error" in back:
             return html.Div(f"⚠️ Backtest error: {back['error']}")
         return html.Div(
             [
                 html.H3(f"{ticker} — Backtesting Metrics", className="section-title"),
-                html.Ul(
+                html.Div(
                     [
-                        html.Li(f"📅 Samples: {back.get('samples', 0)}"),
-                        html.Li(f"💡 MSE: {back.get('mse', 0):.6f}"),
-                        html.Li(f"🚀 CAGR: {back.get('cagr', 0):.2%}"),
-                        html.Li(f"⚖️ Sharpe: {back.get('sharpe', 0):.2f}"),
-                        html.Li(f"📉 Max Drawdown: {back.get('max_drawdown', 0):.2%}"),
-                    ]
+                        html.P(f"📅 Samples: {back.get('samples', 0)}"),
+                        html.P(f"💡 MSE: {back.get('mse', 0):.6f}"),
+                        html.P(f"🚀 CAGR: {back.get('cagr', 0):.2%}"),
+                        html.P(f"⚖️ Sharpe: {back.get('sharpe', 0):.2f}"),
+                        html.P(f"📉 Max Drawdown: {back.get('max_drawdown', 0):.2%}"),
+                    ],
+                    style={"textAlign": "center", "fontSize": "1.1rem"},
                 ),
-            ],
-            style={"textAlign": "center", "fontSize": "1.1rem"},
+            ]
         )
 
-    if tab == "tab-shap":
+    # -------------------- Explainability Tab --------------------
+    elif tab == "tab-shap":
         fi = pred.get("feature_importance", {})
         if not fi or "error" in fi:
             return html.Div(
-                "SHAP not available; coefficient/importance fallback may have also failed."
+                "⚠️ SHAP explanations not available for this model/environment."
             )
         features = list(fi.keys())
         vals = list(fi.values())
@@ -148,10 +196,12 @@ def update_tabs(tab, n_clicks, ticker):
         )
         return html.Div([dcc.Graph(figure=fig)])
 
+    return html.Div("⚠️ Please select a valid tab.")
 
-# ===============================
-# ✅ STYLING
-# ===============================
+
+# ======================================================
+# ✅ STYLING (Glass UI)
+# ======================================================
 app.index_string = """
 <!DOCTYPE html>
 <html>
@@ -183,7 +233,8 @@ app.index_string = """
             width: 85%;
             max-width: 1100px;
         }
-        .title { text-align: center; font-size: 2rem; font-weight: 700; margin-bottom: 20px; color: #e0e0e0; }
+        .title { font-size: 2rem; font-weight: 700; color: #e0e0e0; }
+        .status-badge { font-size: 1rem; margin-right: 15px; }
         .controls { display: flex; justify-content: center; align-items: center; gap: 15px; margin-bottom: 20px; }
         .dropdown { width: 200px; color: #000; }
         .button { background-color: #00bfa6; color: #fff; border: none; border-radius: 8px; padding: 10px 20px; font-size: 1rem; cursor: pointer; transition: all 0.3s ease; }
