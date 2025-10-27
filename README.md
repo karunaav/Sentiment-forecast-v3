@@ -16,7 +16,5 @@ A full-stack **financial forecasting suite** combining ML sentiment analysis, ti
 - ⚙️ **Render-ready deployment** (single container, single URL)  
 - ⚡ **Optimized performance** with caching, async requests, and lightweight models
 
----
 
-## 🧩 Project Structure
 
