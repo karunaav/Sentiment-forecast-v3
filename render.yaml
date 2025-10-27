@@ -1,0 +1,22 @@
+
+services:
+  - type: web
+    name: sentiment-forecast-v3
+    env: python
+    plan: free
+    region: oregon
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "uvicorn app:app --host 0.0.0.0 --port $PORT"
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: ENABLE_SHAP
+        value: "true"
+      - key: ENABLE_VADER
+        value: "true"
+      - key: API_BASE
+        value: ""
+      - key: MODEL_PATH
+        value: "models/latest_model.pkl"
+      - key: TICKERS
+        value: "AAPL,AMZN,META,GOOGL,NFLX"

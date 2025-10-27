@@ -1,0 +1,15 @@
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+starlette==0.38.5
+pydantic==2.8.2
+pandas==2.2.2
+numpy==1.26.4
+scikit-learn==1.4.2
+scipy==1.11.4
+yfinance==0.2.40
+requests-cache==1.2.0
+dash==2.17.1
+plotly==5.22.0
+nltk==3.9.1
+shap==0.45.0
+certifi==2024.7.4
