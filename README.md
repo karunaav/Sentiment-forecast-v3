@@ -3,7 +3,6 @@
 
 A full-stack **financial forecasting suite** combining ML sentiment analysis, time-series modeling, and an interactive dashboard — deployable directly on [Render](https://render.com).
 
----
 
 ## 🚀 Features
 
